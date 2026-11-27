@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LoanTrack</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <script src="js/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar__inner">
+      <h1 class="brand">LoanTrack</h1>
+      <p class="tagline">Loan applications dashboard</p>
+    </div>
+  </header>
+
+  <main class="container layout">
+    <section class="card" aria-labelledby="add-loan-title">
+      <h2 id="add-loan-title" class="card__title">Add loan</h2>
+
+      <form id="loan-form" class="form">
+        <div class="field">
+          <label for="borrower_name">Borrower name</label>
+          <input id="borrower_name" name="borrower_name" type="text" required maxlength="200"
+                 autocomplete="name" aria-describedby="borrower_name-error">
+          <p id="borrower_name-error" class="field__error" hidden></p>
+        </div>
+
+        <div class="field">
+          <label for="loan_amount">Loan amount</label>
+          <input id="loan_amount" name="loan_amount" type="number" required min="0.01" step="0.01"
+                 max="999999999999.99" inputmode="decimal" aria-describedby="loan_amount-error">
+          <p id="loan_amount-error" class="field__error" hidden></p>
+        </div>
+
+        <div class="field">
+          <label for="property_city">Property city <span class="optional">(optional)</span></label>
+          <input id="property_city" name="property_city" type="text" maxlength="100"
+                 autocomplete="address-level2" aria-describedby="property_city-error">
+          <p id="property_city-error" class="field__error" hidden></p>
+        </div>
+
+        <p class="hint">New loans always start with status <strong>PENDING</strong>.</p>
+
+        <button id="submit-button" class="button button--primary" type="submit">Add loan</button>
+
+        <div id="form-message" class="message" role="status" aria-live="polite" hidden></div>
+      </form>
+    </section>
+
+    <section class="card card--wide" aria-labelledby="loans-title">
+      <div class="card__header">
+        <h2 id="loans-title" class="card__title">Loans <span id="loan-count" class="count"></span></h2>
+        <button id="refresh-button" class="button button--secondary" type="button">Refresh</button>
+      </div>
+
+      <div id="loans-loading" class="state state--loading" role="status" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span> Loading loans&hellip;
+      </div>
+      <div id="loans-empty" class="state" hidden>No loans yet. Add the first one with the form.</div>
+      <div id="loans-error" class="message message--error" role="alert" hidden></div>
+
+      <div class="table-wrap">
+        <table id="loans-table" class="table" hidden>
+          <caption class="visually-hidden">All loans, newest first</caption>
+          <thead>
+            <tr>
+              <th scope="col">ID</th>
+              <th scope="col">Borrower</th>
+              <th scope="col" class="num">Amount</th>
+              <th scope="col">City</th>
+              <th scope="col">Status</th>
+              <th scope="col">Created</th>
+            </tr>
+          </thead>
+          <tbody id="loans-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer__inner">
+      <span>Served by <code id="served-by">&mdash;</code></span>
+      <span>Version <code id="app-version">&mdash;</code></span>
+    </div>
+  </footer>
+</body>
+</html>
