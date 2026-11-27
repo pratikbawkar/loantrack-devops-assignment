@@ -1,0 +1,113 @@
+# FastAPI backend: Deployment + ClusterIP Service (backend.loantrack.svc.cluster.local:8000).
+# Images are built into the local cluster by scripts/deploy.sh, so they are
+# never pulled from a registry (imagePullPolicy: Never).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: loantrack
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: loantrack
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Zero-downtime rollout: start one extra new pod, remove an old pod only
+      # after a new one passes its readiness probe.
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend
+        app.kubernetes.io/part-of: loantrack
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: backend
+          image: loantrack-backend:v1
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8000
+          # Non-secret settings from the ConfigMap; credentials only from the Secret.
+          envFrom:
+            - configMapRef:
+                name: loantrack-config
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: loantrack-db
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: loantrack-db
+                  key: POSTGRES_PASSWORD
+          # Liveness = "is the process alive?" (/healthz never touches the DB),
+          # so a database outage never makes Kubernetes restart the backend.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # Readiness = "can it serve requests?" (/readyz runs SELECT 1, up to 2 s,
+          # hence timeoutSeconds 3). Not-ready pods are only removed from the Service.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # On pod deletion (rollout, scale-down) Kubernetes sends SIGTERM and removes
+          # the pod from the Service endpoints at the same time. uvicorn stops
+          # accepting connections on SIGTERM, while kube-proxy may still route a
+          # few requests to the pod: those fail (502 through nginx). Sleeping
+          # first keeps the pod serving until the routing change has propagated.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: loantrack
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: loantrack
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
