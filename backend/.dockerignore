@@ -1,0 +1,19 @@
+# Only requirements.txt and app/ are needed to build the image.
+.git
+.gitignore
+.env
+.env.*
+Dockerfile
+.dockerignore
+
+# dependencies and caches
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+
+# tests and dev-only tooling never ship
+tests
+pytest.ini
+requirements-dev.txt
