@@ -1,0 +1,71 @@
+# LoanTrack: frontend (nginx) -> backend (FastAPI) -> db (PostgreSQL)
+#   cp .env.example .env
+#   docker compose up -d --build
+#   open http://localhost:8080
+# All values come from the git-ignored .env; nothing secret is written here.
+
+name: loantrack
+
+services:
+  db:
+    image: postgres:17.12-alpine3.24
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs 001_*.sql then 002_*.sql automatically, only on an empty data volume.
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -h 127.0.0.1 forces a TCP check: during first-time init the server only
+      # listens on its Unix socket, so this stays unhealthy until init finishes.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks: [loantrack]
+    restart: unless-stopped
+    # No published port: only the backend talks to the database.
+
+  backend:
+    build:
+      context: ./backend
+      args:
+        APP_VERSION: v1
+    image: loantrack-backend:v1
+    pull_policy: build     # always built locally; never pulled from a registry
+    env_file: .env          # DB_HOST=db, DB_PORT=5432, POSTGRES_*, pool/retry settings, APP_VERSION
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [loantrack]
+    restart: unless-stopped
+    # Not published: the browser reaches it only through the frontend's /api/ proxy.
+    # The backend itself retries the database with backoff, so it also survives
+    # being started (or kept running) while db is down.
+
+  frontend:
+    build:
+      context: ./frontend
+    image: loantrack-frontend:v1
+    pull_policy: build
+    environment:
+      BACKEND_HOST: backend
+      BACKEND_PORT: "8000"
+    ports:
+      - "${FRONTEND_HOST_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [loantrack]
+    restart: unless-stopped
+
+networks:
+  loantrack:
+    name: loantrack-net
+    driver: bridge
+
+volumes:
+  pgdata:

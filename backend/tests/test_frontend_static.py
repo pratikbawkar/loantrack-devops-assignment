@@ -19,6 +19,12 @@ INDEX = FRONTEND / "index.html"
 CSS = FRONTEND / "css" / "styles.css"
 JS = FRONTEND / "js" / "app.js"
 REQUIRED_FILES = [INDEX, CSS, JS]
+NGINX_CONF = FRONTEND / "nginx.conf"
+
+# Files the browser receives. The container build files next to them are
+# infrastructure: they are allowed, but never served to the browser.
+STATIC_SUFFIXES = {".html", ".css", ".js"}
+CONTAINER_FILES = {"Dockerfile", ".dockerignore", "nginx.conf"}
 
 
 def _read(path: Path) -> str:
@@ -27,6 +33,10 @@ def _read(path: Path) -> str:
 
 def _all_frontend_files() -> list[Path]:
     return [p for p in FRONTEND.rglob("*") if p.is_file()]
+
+
+def _static_assets() -> list[Path]:
+    return [p for p in _all_frontend_files() if p.suffix in STATIC_SUFFIXES]
 
 
 def _strip_js_comments(source: str) -> str:
@@ -115,9 +125,10 @@ def test_required_file_exists_and_not_empty(path):
 
 
 def test_frontend_is_static_only_without_dependencies():
-    allowed = {".html", ".css", ".js"}
     for path in _all_frontend_files():
-        assert path.suffix in allowed, f"unexpected file in static frontend: {path.relative_to(FRONTEND)}"
+        relative = path.relative_to(FRONTEND)
+        is_container_file = len(relative.parts) == 1 and path.name in CONTAINER_FILES
+        assert path.suffix in STATIC_SUFFIXES or is_container_file, f"unexpected file in static frontend: {relative}"
     for name in ("package.json", "node_modules", "requirements.txt"):
         assert not any(name in p.parts or p.name == name for p in FRONTEND.rglob("*")), name
 
@@ -291,6 +302,35 @@ HARDCODED_ADDRESS_PATTERNS = [
 
 @pytest.mark.parametrize("pattern", HARDCODED_ADDRESS_PATTERNS)
 def test_no_hardcoded_backend_addresses(pattern):
-    for path in _all_frontend_files():
+    # Browser code only: the nginx config legitimately names the backend.
+    assets = _static_assets()
+    assert len(assets) >= 3
+    for path in assets:
         match = re.search(pattern, _read(path), re.IGNORECASE)
         assert match is None, f"{pattern!r} matched {match.group(0)!r} in {path.relative_to(FRONTEND)}"
+
+
+# ---------------------------------------------------------------------------
+# nginx: proxies /api/ to the backend only, answers /healthz itself
+# ---------------------------------------------------------------------------
+
+
+def test_nginx_proxies_api_to_backend_and_strips_prefix():
+    conf = _read(NGINX_CONF)
+    assert re.search(r"location /api/ \{", conf)
+    assert "rewrite ^/api/(.*)$ /$1 break;" in conf
+    upstreams = re.findall(r"^\s*set \$backend_upstream (\S+);", conf, re.M)
+    assert upstreams == ["http://${BACKEND_HOST}:${BACKEND_PORT}"]
+    assert len(re.findall(r"^\s*proxy_pass ", conf, re.M)) == 1
+
+
+def test_nginx_healthz_is_local_not_proxied():
+    conf = _read(NGINX_CONF)
+    block = re.search(r"location = /healthz \{(.*?)\}", conf, re.S)
+    assert block, "nginx must answer /healthz itself"
+    assert "return 200" in block.group(1)
+    assert "proxy_pass" not in block.group(1)
+
+
+def test_nginx_listens_on_unprivileged_port():
+    assert re.search(r"^\s*listen 8080;", _read(NGINX_CONF), re.M)
