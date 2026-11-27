@@ -1,0 +1,24 @@
+# Non-sensitive settings only. Credentials live in the Secret "loantrack-db"
+# (see secret.example.yaml). APP_VERSION is not set here on purpose: it is
+# baked into each image at build time, so a :v2 image reports v2.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loantrack-config
+  namespace: loantrack
+  labels:
+    app.kubernetes.io/part-of: loantrack
+data:
+  # backend -> postgres (ClusterIP Service in this namespace)
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  POSTGRES_DB: loantrack
+  DB_POOL_MIN_SIZE: "1"
+  DB_POOL_MAX_SIZE: "10"
+  DB_CONNECT_TIMEOUT_SECONDS: "3"
+  DB_RETRY_BASE_SECONDS: "0.5"
+  DB_RETRY_MAX_SECONDS: "30"
+  # frontend nginx -> backend. Fully qualified because nginx's own resolver
+  # does not apply the pod's DNS search domains.
+  BACKEND_HOST: backend.loantrack.svc.cluster.local
+  BACKEND_PORT: "8000"
