@@ -1,0 +1,142 @@
+# PostgreSQL as a StatefulSet with a volumeClaimTemplate:
+# - the pod keeps a stable identity (postgres-0) and is re-attached to the SAME
+#   PersistentVolumeClaim (data-postgres-0) whenever it is rescheduled;
+# - deleting the pod or the StatefulSet does not delete the PVC, so data survives.
+# A single replica: this is one database, not a replicated cluster.
+#
+# The schema/seed SQL is mounted from the ConfigMap "postgres-migrations", which
+# scripts/deploy.sh builds from db/migrations/ (one source of truth). The image
+# runs it automatically only when the data directory is empty.
+
+# Governing (headless) Service required by the StatefulSet for stable pod DNS.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  namespace: loantrack
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: loantrack
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+# Client Service used by the backend: postgres.loantrack.svc.cluster.local:5432.
+# ClusterIP only, so the database is not reachable from outside the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: loantrack
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: loantrack
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: loantrack
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: loantrack
+spec:
+  serviceName: postgres-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: loantrack
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        fsGroup: 70   # "postgres" group in the alpine image: lets it own the volume
+      containers:
+        - name: postgres
+          image: postgres:17.12-alpine3.24
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: loantrack-db
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: loantrack-db
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: loantrack-config
+                  key: POSTGRES_DB
+            # Subdirectory: the volume root may contain lost+found, which initdb rejects.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: migrations
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          # TCP check (-h 127.0.0.1): during first-time init the server only
+          # listens on its Unix socket, so the pod is not Ready until init ends.
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # More forgiving than readiness: only restart a database that has
+          # been unresponsive for ~1 minute (first init + migrations take a while).
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: migrations
+          configMap:
+            name: postgres-migrations
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: postgres
+          app.kubernetes.io/part-of: loantrack
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

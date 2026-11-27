@@ -1,0 +1,7 @@
+# Every LoanTrack resource lives here; nothing goes in "default".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: loantrack
+  labels:
+    app.kubernetes.io/part-of: loantrack
