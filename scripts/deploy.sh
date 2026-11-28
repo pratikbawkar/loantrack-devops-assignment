@@ -71,6 +71,14 @@ log "Building images and loading them into minikube (tag: $IMAGE_TAG)"
 build_and_load "loantrack-backend:$IMAGE_TAG" backend --build-arg "APP_VERSION=$IMAGE_TAG"
 build_and_load "loantrack-frontend:$IMAGE_TAG" frontend
 
+# The manifests name the default tag (:v1). Substitute IMAGE_TAG at apply time so
+# the cluster runs the tag that was just built. When the tag changes, Kubernetes
+# performs the rolling update by itself. The files on disk are not changed.
+apply_tagged() {
+  sed -e "s|loantrack-backend:v1|loantrack-backend:$IMAGE_TAG|" \
+      -e "s|loantrack-frontend:v1|loantrack-frontend:$IMAGE_TAG|" "$1" | k apply -f -
+}
+
 # ---------------------------------------------------------------- config
 log "Namespace and configuration"
 k apply -f k8s/namespace.yaml
@@ -98,25 +106,16 @@ else
 fi
 
 # ---------------------------------------------------------------- workloads
-# A rebuilt image keeps the same tag, so existing pods are restarted to pick it up.
-restart_if_present() {
-  if k -n "$NAMESPACE" get "deployment/$1" >/dev/null 2>&1; then echo "true"; else echo "false"; fi
-}
-backend_existed="$(restart_if_present backend)"
-frontend_existed="$(restart_if_present frontend)"
-
 log "PostgreSQL (StatefulSet)"
 k apply -f k8s/postgres.yaml
 k -n "$NAMESPACE" rollout status statefulset/postgres --timeout="$ROLLOUT_TIMEOUT"
 
 log "Backend"
-k apply -f k8s/backend.yaml
-if [ "$backend_existed" = "true" ]; then k -n "$NAMESPACE" rollout restart deployment/backend; fi
+apply_tagged k8s/backend.yaml
 k -n "$NAMESPACE" rollout status deployment/backend --timeout="$ROLLOUT_TIMEOUT"
 
 log "Frontend"
-k apply -f k8s/frontend.yaml
-if [ "$frontend_existed" = "true" ]; then k -n "$NAMESPACE" rollout restart deployment/frontend; fi
+apply_tagged k8s/frontend.yaml
 k -n "$NAMESPACE" rollout status deployment/frontend --timeout="$ROLLOUT_TIMEOUT"
 
 # ---------------------------------------------------------------- done
